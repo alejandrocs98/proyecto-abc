@@ -37,67 +37,125 @@ def Phi(kmer, k):
     return InvertibleHash(NaturalHash(kmer, k), 2 * k)
 
 # Compute minimizers
-def LocalMinimizers(queue):
-    i = 1
-    ranked = sorted(queue)
-    t = ranked[0][0]
-    if t < np.Inf:
-        for M in ranked[1:]:
-            if M[0] == t: 
-                i += 1
-            else:
-                break 
-        return ranked[:i]
-    return []
+# def LocalMinimizers(queue):
+#     i = 1
+#     ranked = sorted(queue)
+#     t = ranked[0][0]
+#     if t < np.Inf:
+#         for M in ranked[1:]:
+#             if M[0] == t: 
+#                 i += 1
+#             else:
+#                 break 
+#         return ranked[:i]
+#     return []
 
 
-def MinimizerSketch(s, w, k): 
-    queue = [] 
-    M = []
-    for i in range(w):
-        kmer = s[i: i + k]
-        rckmer = screed.rc(kmer)
-        u = Phi(kmer, k)
-        v = Phi(rckmer, k)
-        if u < v:
-            queue.append((u, i, 0))
-        if u == v: 
-            queue.append((np.Inf, -1, -1))
-        if u > v:
-            queue.append((v, i, 1))
-    M.extend(LocalMinimizers(queue))
+# def MinimizerSketch(s, w, k): 
+#     queue = [] 
+#     M = []
+#     for i in range(w):
+#         kmer = s[i: i + k]
+#         rckmer = screed.rc(kmer)
+#         u = Phi(kmer, k)
+#         v = Phi(rckmer, k)
+#         if u < v:
+#             queue.append((u, i, 0))
+#         if u == v: 
+#             queue.append((np.Inf, -1, -1))
+#         if u > v:
+#             queue.append((v, i, 1))
+#     M.extend(LocalMinimizers(queue))
 
 
-    for i in range(w, len(s) - k + 1):
-        kmer = s[i: i + k]
-        rckmer = screed.rc(kmer)
-        u = Phi(kmer, k)
-        v = Phi(rckmer, k)
-        if u < v:
-            queue.append((u, i, 0))
-        if u == v: 
-            queue.append((np.Inf, -1, -1))
-        if u > v:
-            queue.append((v, i, 1))
+#     for i in range(w, len(s) - k + 1):
+#         kmer = s[i: i + k]
+#         rckmer = screed.rc(kmer)
+#         u = Phi(kmer, k)
+#         v = Phi(rckmer, k)
+#         if u < v:
+#             queue.append((u, i, 0))
+#         if u == v: 
+#             queue.append((np.Inf, -1, -1))
+#         if u > v:
+#             queue.append((v, i, 1))
         
-        queue.pop(0)
+#         queue.pop(0)
 
-        lastm = M[-1][0]
-        lasti = M[-1][1]
-        m = queue[-1][0]
-        i = queue[-1][1]
-        if m <= lastm:
-            M.append(queue[-1])
-        elif i - lasti >= w:
-            M.extend(LocalMinimizers(queue))
+#         lastm = M[-1][0]
+#         lasti = M[-1][1]
+#         m = queue[-1][0]
+#         i = queue[-1][1]
+#         if m <= lastm:
+#             M.append(queue[-1])
+#         elif i - lasti >= w:
+#             M.extend(LocalMinimizers(queue))
     
-    return M
+#     return M
+
+def individual_hash(cadena):
+    values =  {'A': 0, 'C': 1, 'G': 2, 'T': 3}
+    array = np.zeros(len(cadena) - 1)
+    for i in range(len(cadena) - 1):
+        array[i] = values[cadena[i]] * 4 + values[cadena[i + 1]]
+    return array
+
+
+
+def NaturalHash(kmer, k):
+    values =  {'A': 0, 'C': 1, 'G': 2, 'T': 3}
+    x = 0
+    for i in range(k):
+        x += values[kmer[k - 1 - i]]  * (4 ** i)
+    return x
+
+def hamming_distance(a, b):
+    dist = 0
+    for i in range(len(a)):
+        if a[i] != b[i]:
+            dist += 1
+    return dist
+
+def squared_distance(a, b):
+    return sum((b - a)**2)
+
+def local_representative_sketch(s, w, k, d): 
+    t = len(s)
+    representatives = []
+    for i in range(0, t - w, w // d):
+        windowlist= []
+        for j in range(w - k + 1):
+            kmer = s[i + j: i + j + k]
+            windowlist.append(individual_hash(kmer))
+            windowlist.append(individual_hash(screed.rc(kmer)))
+
+        mean = np.mean(windowlist, axis=0)
+
+        local_representative = windowlist[0]
+        max_distance = squared_distance(local_representative, mean)
+        max_kmer_pos = 0
+        for j in range(1, len(windowlist)):
+            testkmerarray = windowlist[j]
+            test = squared_distance(testkmerarray, mean)
+
+            if test > max_distance:
+                local_representative = testkmerarray
+                max_distance = test
+                max_kmer_pos = j
+        
+        if max_kmer_pos < w - k + 1:
+            max_kmer = s[i + max_kmer_pos: i + max_kmer_pos + k]
+            representatives.append((Phi(max_kmer, k), i + max_kmer_pos, 0))
+        else:
+            max_kmer = screed.rc(s[i + max_kmer_pos - w + k - 1: i + max_kmer_pos - w + k - 1 + k])
+            representatives.append((Phi(max_kmer, k), i + max_kmer_pos - w + k - 1, 1))
+    return representatives
 
 # Index target sequences
-def Index(T, w, k):
+def Index(T, w, k, d):
     A = []
     for t in range(len(T)):
-        M = MinimizerSketch(T[t], w, k)
+        M = local_representative_sketch(T[t], w, k, d)
         for minimizer in M:
             h, i, r = minimizer
             seqminimizer = (h, t, i, r)
@@ -112,9 +170,9 @@ def Index(T, w, k):
 
 # Map a query sequence
 
-def Map(H, q, w, k, epsilon):
+def Map(H, q, w, k, d, epsilon):
     A = []
-    M = MinimizerSketch(q, w, k)
+    M = local_representative_sketch(q, w, k, d)
     for minimizer in M:
         h, i, r = minimizer
         if h in H.keys():
@@ -149,11 +207,11 @@ sequence_file_name = sys.argv[2]
 epsilon = sys.argv[3] 
 
 target_sequence = [GetSequencesFromFile(target_sequence_file_name)[0]]
-w = 5
+w = 30
 k = 15
+d = 10
 
-
-H = Index(target_sequence, w, k)
+H = Index(target_sequence, w, k, d)
 
 # Output sam_file
 with open(sequence_file_name.rstrip('.fasta') + '_mocamap.sam', 'w') as f:
